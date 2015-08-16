@@ -176,8 +176,13 @@ class Address(models.Model):
     address = BitcoinAddressField()
 
     def getTotalReceived(self, confirmations):
-        rpc = AuthServiceProxy('http://' + settings.BITCOIN_RPC_USERNAME + ':' + settings.BITCOIN_RPC_PASSWORD + '@' + settings.BITCOIN_RPC_IP + ':' + str(settings.BITCOIN_RPC_PORT))
-        return rpc.getreceivedbyaddress(self.address, confirmations)
+        current_block_height_queryset = CurrentBlockHeight.objects.order_by('-block_height')
+        current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
+
+        max_block_height = max(0, current_block_height - confirmations + 1)
+        txs = self.transactions.filter(amount__gt=0, incoming_txid__isnull=False, block_height__lte=max_block_height)
+
+        return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
 
     def __unicode__(self):
         full_path = self.wallet.path + [self.subpath_number]
@@ -196,8 +201,10 @@ class Transaction(models.Model):
 
     description = models.CharField(max_length=200)
 
-    # This is set only if transaction deals with real Bitcoin network
+    # These are set only if transaction deals with real Bitcoin network
     incoming_txid = models.CharField(max_length=64, unique=True, null=True, blank=True, default=None)
+    block_height = models.PositiveIntegerField(null=True, blank=True, default=None)
+    receiving_address = models.ForeignKey(Address, related_name='transactions', null=True, blank=True, default=None)
 
     outgoing_tx = models.ForeignKey('OutgoingTransaction', related_name='txs', null=True, blank=True, default=None)
 
@@ -252,3 +259,7 @@ class OutgoingTransactionOutput(models.Model):
 
     def __unicode__(self):
         return str(self.amount) + ' BTC to ' + str(self.bitcoin_address)
+
+
+class CurrentBlockHeight(models.Model):
+    block_height = models.PositiveIntegerField()

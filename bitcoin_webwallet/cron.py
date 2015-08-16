@@ -7,8 +7,9 @@ from django_cron import CronJobBase, Schedule
 import datetime
 from decimal import Decimal
 from bitcoinrpc.authproxy import AuthServiceProxy
+import pytz
 
-from models import Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput
+from models import Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput, CurrentBlockHeight
 from utils import getOrCreateChangeWallet
 
 
@@ -19,40 +20,74 @@ class AddRealBitcoinTransactions(CronJobBase):
     def do(self):
         rpc = AuthServiceProxy('http://' + settings.BITCOIN_RPC_USERNAME + ':' + settings.BITCOIN_RPC_PASSWORD + '@' + settings.BITCOIN_RPC_IP + ':' + str(settings.BITCOIN_RPC_PORT))
 
-        offset = 0
+        # Total number of blocks
+        blocks = rpc.getblockcount()
+        blocks_processed_queryset = CurrentBlockHeight.objects.order_by('-block_height')
+        blocks_processed = blocks_processed_queryset[0].block_height if blocks_processed_queryset.count() else 0
 
-        while True:
-            txs = rpc.listtransactions('', 100, offset)
-            offset += 100
-            if not txs:
-                break
-            for tx in txs:
-                # If this transaction is already added, then skip it
-                if Transaction.objects.filter(incoming_txid=tx['txid']).count():
-                    continue
+        # Now incoming transactions will be processed and added to database. Transactions
+        # from new blocks are selected, but also transactions from several older blocks.
+        # These extra transactions are updated in case something (for example fork?) is
+        # able to modify transactions in old blocks.
+        EXTRA_BLOCKS_TO_PROCESS = 6
+        process_since = max(0, blocks_processed - EXTRA_BLOCKS_TO_PROCESS)
+        process_since_hash = rpc.getblockhash(process_since)
 
-                # Currently only support received
-                if tx['category'] != 'receive':
-                    continue
+        # Get all old transactions, that require updating
+        old_txs = Transaction.objects.filter(incoming_txid__isnull=False, block_height__gt=process_since)
+        old_txs = [old_tx for old_tx in old_txs]
 
-                # TODO: What if one Bitcoin transaction is used to send to two of our addresses?
-                try:
-                    address = Address.objects.get(address=tx['address'])
-                except Address.DoesNotExist:
-                    continue
+        txs = rpc.listsinceblock(process_since_hash)['transactions']
+        for tx in txs:
+            # Skip other than receiving transactions
+            if tx['category'] != 'receive':
+                continue
 
-                # If address belongs to change wallet, then do not create transaction
-                if address.wallet.change_wallet:
-                    continue
+            # Get required info
+            txid = tx['txid']
+            address = tx['address']
+            amount = tx['amount']
+            block_height = rpc.getblock(tx['blockhash'])['height']
+            created_at = datetime.datetime.utcfromtimestamp(tx['timereceived']).replace(tzinfo=pytz.utc)
 
+            # Skip transaction if it doesn't belong to any Wallet
+            try:
+                address = Address.objects.get(address=address)
+            except Address.DoesNotExist:
+                continue
+
+            # Check if transaction already exists
+            already_found = False
+            for old_tx in old_txs:
+                if old_tx.incoming_txid == txid:
+                    # Transaction already exists, so do not care about it any more
+                    old_txs.remove(old_tx)
+                    already_found = True
+                    break
+
+            # If transaction is new one
+            if not already_found:
                 new_tx = Transaction.objects.create(
                     wallet=address.wallet,
-                    amount=tx['amount'],
+                    amount=amount,
                     description='Received',
-                    incoming_txid=tx['txid']
+                    incoming_txid=txid,
+                    block_height=block_height,
+                    receiving_address=address,
                 )
-                new_tx.created_at = datetime.datetime.fromtimestamp(tx['timereceived'])
+                new_tx.created_at = created_at
                 new_tx.save(update_fields=['created_at'])
+
+        # Clean remaining old transactions
+        for old_tx in old_txs:
+            old_tx.delete()
+
+        # Mark down what the last processed block was
+        blocks = rpc.getblockcount()
+        if blocks_processed_queryset.count() > 0:
+            blocks_processed_queryset.update(block_height=blocks)
+        else:
+            CurrentBlockHeight.objects.create(block_height=blocks)
 
 
 class SendOutgoingTransactions(CronJobBase):

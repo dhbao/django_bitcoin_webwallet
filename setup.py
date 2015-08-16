@@ -17,6 +17,7 @@ setup(
     install_requires=[
         'django-cron',
         'pycoin',
+        'pytz',
     ],
     dependency_links=[
         'git://github.com/jgarzik/python-bitcoinrpc.git#egg=python-bitcoinrpc',
