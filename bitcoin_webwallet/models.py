@@ -8,6 +8,8 @@ from pycoin.key import Key
 
 from bitcoinrpc.authproxy import AuthServiceProxy
 
+from jsonfield import JSONField
+
 from fields import BIP32PathField, BitcoinAddressField
 
 
@@ -84,6 +86,8 @@ class Wallet(models.Model):
         with transaction.atomic():
             tx = Transaction.objects.create(wallet=self, amount=-total_amount, description=sender_transaction_description or '')
 
+            tx_sending_addresses = []
+
             # This is used if there are other than internal transactions
             outgoing_tx = None
 
@@ -98,15 +102,23 @@ class Wallet(models.Model):
                 # Check if target is wallet or address
                 target_wallet = None
                 target_address = None
+                target_internal_address = None
                 if isinstance(target, Wallet):
                     target_wallet = target
+                    tx_sending_addresses.append({
+                        'amount': str(amount)
+                    })
                 elif isinstance(target, basestring):
                     target_address = target
+                    tx_sending_addresses.append({
+                        'amount': str(amount),
+                        'address': target
+                    })
 
                     # Check if this address belongs to some of the internal wallets
                     try:
-                        internal_address = Address.objects.get(address=target_address)
-                        target_wallet = internal_address.wallet
+                        target_internal_address = Address.objects.get(address=target_address)
+                        target_wallet = target_internal_address.wallet
                         target_address = None
                     except Address.DoesNotExist:
                         pass
@@ -116,7 +128,12 @@ class Wallet(models.Model):
                 if target_wallet:
 
                     # Create new transaction to the receivers wallet
-                    Transaction.objects.create(wallet=target_wallet, amount=amount, description=transaction_description or '')
+                    Transaction.objects.create(
+                        wallet=target_wallet,
+                        amount=amount,
+                        description=transaction_description or '',
+                        receiving_address=target_internal_address
+                    )
 
                     # Increase balance of the target wallet.
                     # This bug prevents this nice version below: https://code.djangoproject.com/ticket/13666
@@ -159,6 +176,10 @@ class Wallet(models.Model):
                 source_wallet.extra_balance -= amount
                 source_wallet.save(update_fields=['extra_balance'])
 
+            if tx_sending_addresses:
+                tx.sending_addresses = tx_sending_addresses
+                tx.save(update_fields=['sending_addresses'])
+
     def save(self, *args, **kwargs):
         if self.path[0] == 0 and not self.change_wallet:
             raise Exception('Wallet paths starting with zero are reserved for change wallets!')
@@ -180,7 +201,7 @@ class Address(models.Model):
         current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
 
         max_block_height = max(0, current_block_height - confirmations + 1)
-        txs = self.transactions.filter(amount__gt=0, incoming_txid__isnull=False, block_height__lte=max_block_height)
+        txs = self.incoming_transactions.filter(amount__gt=0, incoming_txid__isnull=False, block_height__lte=max_block_height)
 
         return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
 
@@ -201,11 +222,14 @@ class Transaction(models.Model):
 
     description = models.CharField(max_length=200)
 
-    # These are set only if transaction deals with real Bitcoin network
+    receiving_address = models.ForeignKey(Address, related_name='incoming_transactions', null=True, blank=True, default=None)
+    sending_addresses = JSONField(null=True, blank=True, default=None)
+
+    # Incoming details from real Bitcoin network
     incoming_txid = models.CharField(max_length=64, unique=True, null=True, blank=True, default=None)
     block_height = models.PositiveIntegerField(null=True, blank=True, default=None)
-    receiving_address = models.ForeignKey(Address, related_name='transactions', null=True, blank=True, default=None)
 
+    # Outgoing details from real Bitcoin network
     outgoing_tx = models.ForeignKey('OutgoingTransaction', related_name='txs', null=True, blank=True, default=None)
 
     def __unicode__(self):
