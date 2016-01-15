@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Sum
 from django.utils.timezone import now
 
@@ -9,7 +10,7 @@ from decimal import Decimal
 from bitcoinrpc.authproxy import AuthServiceProxy
 import pytz
 
-from models import Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput, CurrentBlockHeight
+from models import Wallet, Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput, CurrentBlockHeight
 from utils import getOrCreateChangeWallet
 
 
@@ -122,10 +123,72 @@ class SendOutgoingTransactions(CronJobBase):
             signing_result = rpc.signrawtransaction(raw_tx)
             raw_tx_signed = signing_result['hex']
             if signing_result['complete']:
+                # Calculate how much fee each wallet needs to pay
+                total_fees = otx.calculateFee()
+                fees_for_wallets = []
+                if total_fees:
+                    txs_count = len(otx.txs.all())
+                    for tx in otx.txs.all():
+                        wallet_found = False
+                        for fee_for_wallet in fees_for_wallets:
+                            if fee_for_wallet['wallet'] == tx.wallet:
+                                fee_for_wallet['amount'] += total_fees / txs_count
+                                wallet_found = True
+                        if not wallet_found:
+                            fees_for_wallets.append({
+                                'wallet': tx.wallet,
+                                'amount': total_fees / txs_count,
+                            })
+                for fee_for_wallet in fees_for_wallets:
+                    fee_for_wallet['amount'] = fee_for_wallet['amount'].quantize(Decimal('0.00000001'))
+
+                fee_receiving_wallet = getOrCreateChangeWallet()
+                fee_receiving_address = fee_receiving_wallet.getOrCreateAddress(0)
+
                 rpc.sendrawtransaction(raw_tx_signed)
-                otx.sent_at = now()
-                otx.save(update_fields=['sent_at'])
-                # TODO: Reduce fee from wallets that are part of the sending!
+
+                # Atomically mark outgoing transaction as send and reduce fees from wallets.
+                with transaction.atomic():
+                    otx.sent_at = now()
+                    otx.save(update_fields=['sent_at'])
+
+                    total_effective_fee = Decimal(0)
+                    sending_addresses = []
+                    for fee_for_wallet in fees_for_wallets:
+                        wallet = fee_for_wallet['wallet']
+                        amount = fee_for_wallet['amount']
+                        # Sending transaction
+                        Transaction.objects.create(
+                            wallet=wallet,
+                            amount=-amount,
+                            description='Fee from sent Bitcoins',
+                            receiving_address=fee_receiving_address,
+                        )
+
+                        # Reduce funds
+                        wallet = Wallet.objects.get(path=wallet.path)
+                        wallet.extra_balance -= amount
+                        wallet.save(update_fields=['extra_balance'])
+
+                        # Keep track who sent this
+                        sending_addresses.append({
+                            'amount': amount,
+                        })
+
+                        total_effective_fee += amount
+
+                    # Receiving transaction
+                    Transaction.objects.create(
+                        wallet=fee_receiving_wallet,
+                        amount=total_effective_fee,
+                        description='Fee refund from sent Bitcoins',
+                        sending_addresses=sending_addresses,
+                    )
+
+                    # Add funds
+                    fee_receiving_wallet = Wallet.objects.get(path=fee_receiving_wallet.path)
+                    fee_receiving_wallet.extra_balance += total_effective_fee
+                    fee_receiving_wallet.save(update_fields=['extra_balance'])
 
         # Get all outgoing transactions that do not have any inputs selected
         otxs_without_inputs = OutgoingTransaction.objects.filter(inputs_selected_at=None)
