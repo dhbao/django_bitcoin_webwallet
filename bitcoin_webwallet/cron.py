@@ -14,7 +14,7 @@ from utils import getOrCreateChangeWallet
 
 
 class AddRealBitcoinTransactions(CronJobBase):
-    schedule = Schedule(run_every_mins=5, retry_after_failure_mins=5)
+    schedule = Schedule(run_every_mins=1, retry_after_failure_mins=1)
     code = 'bitcoin_webwallet.cron.AddRealBitcoinTransactions'
 
     def do(self):
