@@ -43,6 +43,11 @@ class AddRealBitcoinTransactions(CronJobBase):
             if tx['category'] != 'receive':
                 continue
 
+            # Skip unconfirmed transactions for now
+            # TODO: Show these too!
+            if 'blockhash' not in tx:
+                continue
+
             # Get required info
             txid = tx['txid']
             address = tx['address']
