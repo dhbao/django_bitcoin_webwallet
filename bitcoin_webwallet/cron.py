@@ -90,7 +90,7 @@ class AddRealBitcoinTransactions(CronJobBase):
 
         # Mark down what the last processed block was
         blocks = rpc.getblockcount()
-        if blocks_processed_queryset.count() > 0:
+        if blocks_processed_queryset.exists():
             blocks_processed_queryset.update(block_height=blocks)
         else:
             CurrentBlockHeight.objects.create(block_height=blocks)
@@ -160,7 +160,7 @@ class SendOutgoingTransactions(CronJobBase):
                         # Sending transaction
                         Transaction.objects.create(
                             wallet=wallet,
-                            amount=-amount,
+                            amount=str(-amount),
                             description='Fee from sent Bitcoins',
                             receiving_address=fee_receiving_address,
                         )
@@ -172,7 +172,7 @@ class SendOutgoingTransactions(CronJobBase):
 
                         # Keep track who sent this
                         sending_addresses.append({
-                            'amount': amount,
+                            'amount': str(amount),
                         })
 
                         total_effective_fee += amount
@@ -189,6 +189,8 @@ class SendOutgoingTransactions(CronJobBase):
                     fee_receiving_wallet = Wallet.objects.get(path=fee_receiving_wallet.path)
                     fee_receiving_wallet.extra_balance += total_effective_fee
                     fee_receiving_wallet.save(update_fields=['extra_balance'])
+            elif signing_result.get('errors'):
+                raise Exception('Unable to sign outgoing transaction!')
 
         # Get all outgoing transactions that do not have any inputs selected
         otxs_without_inputs = OutgoingTransaction.objects.filter(inputs_selected_at=None)
@@ -219,7 +221,8 @@ class SendOutgoingTransactions(CronJobBase):
 
             # Calculate fee
             tx_size = 148 * otx.inputs.count() + 34 * (otx.outputs.count() + 1) + 10
-            fee = settings.TRANSACTION_FEE_PER_KILOBYTE * ((tx_size + 999) / 1000)
+            fee = settings.TRANSACTION_FEE_PER_KILOBYTE * Decimal(tx_size) / Decimal(1000)
+            fee = fee.quantize(Decimal('0.00000001'))
 
             # Now assign inputs until there is enough for outputs
             inputs_total = otx.inputs.aggregate(Sum('amount'))['amount__sum'] or Decimal(0)
@@ -246,7 +249,8 @@ class SendOutgoingTransactions(CronJobBase):
 
                 # Recalculate fee
                 tx_size += 148
-                fee = settings.TRANSACTION_FEE_PER_KILOBYTE * ((tx_size + 999) / 1000)
+                fee = settings.TRANSACTION_FEE_PER_KILOBYTE * Decimal(tx_size) / Decimal(1000)
+                fee = fee.quantize(Decimal('0.00000001'))
 
                 # Remove the best output from unspent outputs
                 del unspent_outputs[best_unspent_output_i]
