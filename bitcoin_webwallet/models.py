@@ -63,6 +63,16 @@ class Wallet(models.Model):
 
         return new_address
 
+    def getUnusedAddress(self):
+        latest_address = self.addresses.order_by('-subpath_number').first()
+        if not latest_address:
+            return self.getOrCreateAddress(0)
+        # If there are on-chain incoming transactions, then return fresh address
+        if latest_address.incoming_transactions.filter(incoming_txid__isnull=False).exists():
+            return self.getOrCreateAddress(latest_address.subpath_number + 1)
+        # No on-chain incoming transaction
+        return latest_address
+
     def sendTo(self, targets_and_amounts, required_confirmations, sender_transaction_description=None):
         # First make sure all amounts are valid. Also sum up the total amount
         total_amount = Decimal(0)

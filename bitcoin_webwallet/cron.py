@@ -143,7 +143,7 @@ class SendOutgoingTransactions(CronJobBase):
                     fee_for_wallet['amount'] = fee_for_wallet['amount'].quantize(Decimal('0.00000001'))
 
                 fee_receiving_wallet = getOrCreateChangeWallet()
-                fee_receiving_address = fee_receiving_wallet.getOrCreateAddress(0)
+                fee_receiving_address = fee_receiving_wallet.getUnusedAddress()
 
                 rpc.sendrawtransaction(raw_tx_signed)
 
@@ -269,7 +269,7 @@ class SendOutgoingTransactions(CronJobBase):
             extra_amount = inputs_total - (outputs_total + fee)
             if extra_amount > Decimal(0):
                 change_wallet = getOrCreateChangeWallet()
-                change_address = change_wallet.getOrCreateAddress(0)
+                change_address = change_wallet.getUnusedAddress()
                 OutgoingTransactionOutput.objects.create(tx=otx, amount=extra_amount, bitcoin_address=change_address.address)
 
             # Enough inputs was assigned, so marking this transaction fully assigned
