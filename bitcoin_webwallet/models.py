@@ -268,6 +268,20 @@ class OutgoingTransaction(models.Model):
         fee = inputs_total - outputs_total
         return fee if fee >= 0 else None
 
+    def __unicode__(self):
+        outputs_total = self.outputs.aggregate(Sum('amount'))['amount__sum'] or Decimal(0)
+
+        if not self.inputs_selected_at:
+            return u'Sending of {} BTC to {} addresses using {} transactions.'.format(outputs_total, self.outputs.count(), self.txs.count())
+
+        inputs_total = self.inputs.aggregate(Sum('amount'))['amount__sum'] or Decimal(0)
+        fee = inputs_total - outputs_total
+
+        if not self.sent_at:
+            return u'Sending of {} BTC to {} addresses using {} transactions. Fee is {} BTC.'.format(outputs_total, self.outputs.count(), self.txs.count(), fee)
+
+        return u'Sent {} BTC to {} addresses using {} transactions. Fee was {} BTC.'.format(outputs_total, self.outputs.count(), self.txs.count(), fee)
+
 
 class OutgoingTransactionInput(models.Model):
     tx = models.ForeignKey(OutgoingTransaction, related_name='inputs')
