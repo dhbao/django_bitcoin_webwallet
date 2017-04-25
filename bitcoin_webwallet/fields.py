@@ -1,5 +1,4 @@
 from django.core.exceptions import ValidationError
-from django.db.models import SubfieldBase
 from django.db.models.fields import Field
 from django.utils.six import with_metaclass
 from django.utils.translation import ugettext_lazy as _
@@ -55,7 +54,7 @@ class BIP32PrivateKeyField(Field):
         return value
 
 
-class BIP32PathField(with_metaclass(SubfieldBase, Field)):
+class BIP32PathField(Field):
 
     description = 'Path in BIP32 wallet'
 
@@ -64,6 +63,11 @@ class BIP32PathField(with_metaclass(SubfieldBase, Field)):
 
     def db_type(self, connection):
         return 'VARCHAR(255)'
+
+    def from_db_value(self, value, expression, connection, context):
+        if not value:
+            return None
+        return [int(i_str) for i_str in value.split('/')]
 
     def to_python(self, value):
         if not value:
