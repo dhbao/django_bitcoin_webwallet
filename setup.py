@@ -18,6 +18,7 @@ setup(
         'django-cron',
         'pycoin',
         'pytz',
+        'django-jsonfield',
     ],
     dependency_links=[
         'git://github.com/jgarzik/python-bitcoinrpc.git#egg=python-bitcoinrpc',
