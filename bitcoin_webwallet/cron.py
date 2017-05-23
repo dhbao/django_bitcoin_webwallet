@@ -6,7 +6,7 @@ from django.utils.timezone import now
 from django_cron import CronJobBase, Schedule
 
 import datetime
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from bitcoinrpc.authproxy import AuthServiceProxy
 import pytz
 
@@ -123,46 +123,54 @@ class SendOutgoingTransactions(CronJobBase):
             signing_result = rpc.signrawtransaction(raw_tx)
             raw_tx_signed = signing_result['hex']
             if signing_result['complete']:
-                # Calculate how much fee each wallet needs to pay
-                total_fees = otx.calculateFee()
+                # Calculate how much fee each wallet needs to pay. Each
+                # sender pays average fee from every outgoing transaction
+                # it has, however rounding is done in a way that the
+                # total sum is exatcly the same as the total fee.
                 fees_for_wallets = []
-                if total_fees:
+                fees_to_pay_left = otx.calculateFee()
+                fee_payers_left = otx.txs.count()
+                if fees_to_pay_left:
                     txs_count = len(otx.txs.all())
                     for tx in otx.txs.all():
-                        wallet_found = False
-                        for fee_for_wallet in fees_for_wallets:
-                            if fee_for_wallet['wallet'] == tx.wallet:
-                                fee_for_wallet['amount'] += total_fees / txs_count
-                                wallet_found = True
-                        if not wallet_found:
-                            fees_for_wallets.append({
-                                'wallet': tx.wallet,
-                                'amount': total_fees / txs_count,
-                            })
-                for fee_for_wallet in fees_for_wallets:
-                    fee_for_wallet['amount'] = fee_for_wallet['amount'].quantize(Decimal('0.00000001'))
-
-                fee_receiving_wallet = getOrCreateChangeWallet()
-                fee_receiving_address = fee_receiving_wallet.getUnusedAddress()
+                        # Calculate fee for this payer
+                        assert fee_payers_left > 0
+                        fee = (fees_to_pay_left / fee_payers_left).quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
+                        fee_payers_left -= 1
+                        fees_to_pay_left -= fee
+                        if fee > 0:
+                            # Mark fee paying to correct wallet
+                            wallet_found = False
+                            for fee_for_wallet in fees_for_wallets:
+                                if fee_for_wallet['wallet'] == tx.wallet:
+                                    fee_for_wallet['amount'] += fee
+                                    wallet_found = True
+                            if not wallet_found:
+                                fees_for_wallets.append({
+                                    'wallet': tx.wallet,
+                                    'amount': fee,
+                                })
+                    assert fee_payers_left == 0
+                assert fees_to_pay_left == Decimal(0)
 
                 rpc.sendrawtransaction(raw_tx_signed)
 
-                # Atomically mark outgoing transaction as send and reduce fees from wallets.
+                # Atomically mark outgoing transaction as sent and
+                # add fee paying transactions to sending wallets.
                 with transaction.atomic():
                     otx.sent_at = now()
                     otx.save(update_fields=['sent_at'])
 
-                    total_effective_fee = Decimal(0)
-                    sending_addresses = []
                     for fee_for_wallet in fees_for_wallets:
                         wallet = fee_for_wallet['wallet']
                         amount = fee_for_wallet['amount']
-                        # Sending transaction
+
+                        # Create fee paying transaction
                         Transaction.objects.create(
                             wallet=wallet,
                             amount=str(-amount),
                             description='Fee from sent Bitcoins',
-                            receiving_address=fee_receiving_address,
+                            outgoing_tx=otx,
                         )
 
                         # Reduce funds
@@ -170,25 +178,6 @@ class SendOutgoingTransactions(CronJobBase):
                         wallet.extra_balance -= amount
                         wallet.save(update_fields=['extra_balance'])
 
-                        # Keep track who sent this
-                        sending_addresses.append({
-                            'amount': str(amount),
-                        })
-
-                        total_effective_fee += amount
-
-                    # Receiving transaction
-                    Transaction.objects.create(
-                        wallet=fee_receiving_wallet,
-                        amount=total_effective_fee,
-                        description='Fee refund from sent Bitcoins',
-                        sending_addresses=sending_addresses,
-                    )
-
-                    # Add funds
-                    fee_receiving_wallet = Wallet.objects.get(path=fee_receiving_wallet.path)
-                    fee_receiving_wallet.extra_balance += total_effective_fee
-                    fee_receiving_wallet.save(update_fields=['extra_balance'])
             elif signing_result.get('errors'):
                 raise Exception('Unable to sign outgoing transaction!')
 
