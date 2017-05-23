@@ -242,6 +242,13 @@ class Transaction(models.Model):
     # Outgoing details from real Bitcoin network
     outgoing_tx = models.ForeignKey('OutgoingTransaction', related_name='txs', null=True, blank=True, default=None)
 
+    def getConfirmations(self):
+        if not self.block_height:
+            return 0
+        current_block_height_queryset = CurrentBlockHeight.objects.order_by('-block_height')
+        current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
+        return max(0, current_block_height - self.block_height + 1)
+
     def __unicode__(self):
         if self.amount < Decimal(0):
             result = 'Sent ' + ('%.8f' % -self.amount)
