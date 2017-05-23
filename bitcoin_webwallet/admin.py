@@ -77,6 +77,23 @@ class OutgoingTransactionAdmin(admin.ModelAdmin):
         return instance.calculateFee()
     getFee.short_description = 'Fee'
 
+
+class TransactionAdmin(admin.ModelAdmin):
+    readonly_fields = [
+        'wallet',
+        'created_at',
+        'amount',
+        'description',
+        'receiving_address',
+        'sending_addresses',
+        'incoming_txid',
+        'block_height',
+        'outgoing_tx',
+    ]
+
+    list_display = ['__unicode__', 'created_at', 'amount', 'description']
+
 admin.site.register(Wallet, WalletAdmin)
 admin.site.register(Address, AddressAdmin)
 admin.site.register(OutgoingTransaction, OutgoingTransactionAdmin)
+admin.site.register(Transaction, TransactionAdmin)
