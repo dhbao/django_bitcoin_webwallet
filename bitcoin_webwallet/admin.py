@@ -12,9 +12,6 @@ class WalletAdmin(admin.ModelAdmin):
         'getBalanceInfo',
         'listTransactions',
     ]
-    exclude = [
-        'extra_balance',
-    ]
 
     def listTransactions(self, instance):
         txs = Transaction.objects.filter(wallet=instance).order_by('created_at')
@@ -25,11 +22,11 @@ class WalletAdmin(admin.ModelAdmin):
     listTransactions.short_description = 'Transactions'
 
     def getBalanceInfo(self, instance):
-        total_balance = instance.getBalance(0)
-        result = 'Real Bitcoins: ' + ('%.8f' % (total_balance - instance.extra_balance)) + '\n'
-        result += 'Received/send: ' + ('%.8f' % instance.extra_balance) + '\n'
-        result += 'Total: ' + ('%.8f' % total_balance) + '\n'
-        return result
+        return u'Received: {}\nSent: {}\nTotal: {}'.format(
+            instance.getReceived(0),
+            instance.getSent(),
+            instance.getBalance(0)
+        )
 
     getBalanceInfo.short_description = 'Balance'
 

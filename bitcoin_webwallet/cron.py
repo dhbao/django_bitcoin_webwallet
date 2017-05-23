@@ -173,11 +173,6 @@ class SendOutgoingTransactions(CronJobBase):
                             outgoing_tx=otx,
                         )
 
-                        # Reduce funds
-                        wallet = Wallet.objects.get(path=wallet.path)
-                        wallet.extra_balance -= amount
-                        wallet.save(update_fields=['extra_balance'])
-
             elif signing_result.get('errors'):
                 raise Exception('Unable to sign outgoing transaction!')
 

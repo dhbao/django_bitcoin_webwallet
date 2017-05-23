@@ -20,19 +20,30 @@ class Wallet(models.Model):
 
     path = BIP32PathField(unique=True)
 
-    # This can be both positive and negative
-    extra_balance = models.DecimalField(max_digits=16, decimal_places=8, default=0)
-
     # If this wallet should be used for change outputs.
     # One of these wallets is created automatically,
     # so you never really need to set this True.
     change_wallet = models.BooleanField(default=False)
 
     def getBalance(self, confirmations):
-        result = self.extra_balance
-        for address in self.addresses.all():
-            result += address.getTotalReceived(confirmations)
-        return result
+        current_block_height_queryset = CurrentBlockHeight.objects.order_by('-block_height')
+        current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
+        max_block_height = max(0, current_block_height - confirmations + 1)
+
+        txs = self.transactions.exclude(block_height__gt=max_block_height)
+        return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
+
+    def getReceived(self, confirmations):
+        current_block_height_queryset = CurrentBlockHeight.objects.order_by('-block_height')
+        current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
+        max_block_height = max(0, current_block_height - confirmations + 1)
+
+        txs = self.transactions.filter(amount__gt=0).exclude(block_height__gt=max_block_height)
+        return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
+
+    def getSent(self):
+        txs = self.transactions.filter(amount__lt=0)
+        return -txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
 
     def getOrCreateAddress(self, subpath_number):
         try:
@@ -86,14 +97,13 @@ class Wallet(models.Model):
                 raise Exception('Amount must be greater than zero!')
             total_amount += amount
 
-        # First get raw balance from real Bitcoin addresses
-        raw_balance = Decimal(0)
-        for address in self.addresses.all():
-            raw_balance += address.getTotalReceived(required_confirmations)
-
-        # Then start the sending process. This is done
-        # atomically, to prevent problems with concurrency
+        # Start the sending process. This is done atomically,
+        # to prevent problems with concurrency
         with transaction.atomic():
+            # Make sure this transaction does not make the balance go negative.
+            if self.getBalance(required_confirmations) < total_amount:
+                raise Wallet.NotEnoughBalance('Not enough balance!')
+
             tx = Transaction.objects.create(wallet=self, amount=-total_amount, description=sender_transaction_description or '')
 
             tx_sending_addresses = []
@@ -145,18 +155,6 @@ class Wallet(models.Model):
                         receiving_address=target_internal_address
                     )
 
-                    # Increase balance of the target wallet.
-                    # This bug prevents this nice version below: https://code.djangoproject.com/ticket/13666
-                    """
-                    updated = Wallet.objects.filter(path=target_wallet.path).update(extra_balance=models.F('extra_balance') + amount)
-                    if not updated:
-                        raise Exception('Target wallet is unable to receive!')
-                    """
-                    # We use this ugly version because of bug in Django
-                    target_wallet = Wallet.objects.get(path=target_wallet.path)
-                    target_wallet.extra_balance += amount
-                    target_wallet.save(update_fields=['extra_balance'])
-
                 elif target_address:
 
                     # If there is no outgoing transaction, then create one now
@@ -168,23 +166,6 @@ class Wallet(models.Model):
 
                     # Add new output to outgoing transaction
                     OutgoingTransactionOutput.objects.create(tx=outgoing_tx, amount=amount, bitcoin_address=target_address)
-
-                # Reduce from current wallet
-                # This bug prevents this nice version below: https://code.djangoproject.com/ticket/13666
-                extra_balance_needed = amount - raw_balance
-                """
-                updated = Wallet.objects.filter(path=self.path, extra_balance__gte=extra_balance_needed).update(extra_balance=models.F('extra_balance') - amount)
-                if not updated:
-                    raise Wallet.NotEnoughBalance('Not enough balance!')
-                """
-                # We use this ugly version because of bug in Django
-                source_wallet = Wallet.objects.get(path=self.path)
-                if source_wallet.extra_balance < extra_balance_needed:
-                    # There is not enough balance! Atomic transaction should
-                    # now destroy all the Transaction objects we have created.
-                    raise Wallet.NotEnoughBalance('Not enough balance!')
-                source_wallet.extra_balance -= amount
-                source_wallet.save(update_fields=['extra_balance'])
 
             if tx_sending_addresses:
                 tx.sending_addresses = tx_sending_addresses
@@ -205,15 +186,6 @@ class Address(models.Model):
     subpath_number = models.PositiveIntegerField()
 
     address = BitcoinAddressField()
-
-    def getTotalReceived(self, confirmations):
-        current_block_height_queryset = CurrentBlockHeight.objects.order_by('-block_height')
-        current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
-
-        max_block_height = max(0, current_block_height - confirmations + 1)
-        txs = self.incoming_transactions.filter(amount__gt=0, incoming_txid__isnull=False, block_height__lte=max_block_height)
-
-        return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
 
     def __unicode__(self):
         full_path = self.wallet.path + [self.subpath_number]
