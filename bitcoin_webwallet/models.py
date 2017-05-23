@@ -43,7 +43,7 @@ class Wallet(models.Model):
 
     def getSent(self):
         txs = self.transactions.filter(amount__lt=0)
-        return -txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
+        return -(txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0))
 
     def getOrCreateAddress(self, subpath_number):
         try:
