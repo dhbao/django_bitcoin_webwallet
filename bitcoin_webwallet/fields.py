@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models.fields import Field
 from django.utils.six import with_metaclass
@@ -9,8 +10,12 @@ from pycoin.key.validate import is_address_valid, is_private_bip32_valid
 class BitcoinAddressValidator():
     def __call__(self, value):
         value = str(value)
-        if is_address_valid(value) != 'BTC':
-            raise ValidationError(_(u'%s is not a valid bitcoin address!') % value)
+        if getattr(settings, 'TESTNET', False):
+            if is_address_valid(value) != 'XTN':
+                raise ValidationError(_(u'%s is not a valid bitcoin testnet address!') % value)
+        else:
+            if is_address_valid(value) != 'BTC':
+                raise ValidationError(_(u'%s is not a valid bitcoin address!') % value)
 
 
 class BitcoinAddressField(Field):
@@ -33,8 +38,12 @@ class BitcoinAddressField(Field):
 class BIP32PrivateKeyValidator():
     def __call__(self, value):
         value = str(value)
-        if is_private_bip32_valid(value) != 'BTC':
-            raise ValidationError(u'%s is not a valid BIP32 private key!' % value)
+        if getattr(settings, 'TESTNET', False):
+            if is_private_bip32_valid(value) != 'XTN':
+                raise ValidationError(u'%s is not a valid BIP32 testnet private key!' % value)
+        else:
+            if is_private_bip32_valid(value) != 'BTC':
+                raise ValidationError(u'%s is not a valid BIP32 private key!' % value)
 
 
 class BIP32PrivateKeyField(Field):
