@@ -8,7 +8,7 @@ from models import Wallet, Address, Transaction, OutgoingTransaction
 class WalletAdmin(admin.ModelAdmin):
     readonly_fields = [
         'path',
-        'change_wallet',
+        'internal_wallet',
         'getBalanceInfo',
         'listTransactions',
     ]

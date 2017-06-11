@@ -20,10 +20,10 @@ class Wallet(models.Model):
 
     path = BIP32PathField(unique=True)
 
-    # If this wallet should be used for change outputs.
-    # One of these wallets is created automatically,
-    # so you never really need to set this True.
-    change_wallet = models.BooleanField(default=False)
+    # If this wallet is used by this library. These
+    # are created automatically, and you should
+    # never create wallets where this is set to True.
+    internal_wallet = models.BooleanField(default=False)
 
     def getBalance(self, confirmations):
         current_block_height_queryset = CurrentBlockHeight.objects.order_by('-block_height')
@@ -172,8 +172,8 @@ class Wallet(models.Model):
                 tx.save(update_fields=['sending_addresses'])
 
     def save(self, *args, **kwargs):
-        if self.path[0] == 0 and not self.change_wallet:
-            raise Exception('Wallet paths starting with zero are reserved for change wallets!')
+        if self.path[0] == 0 and not self.internal_wallet:
+            raise Exception('Wallet paths starting with zero are reserved for internal wallets!')
         super(Wallet, self).save(*args, **kwargs)
 
     def __unicode__(self):

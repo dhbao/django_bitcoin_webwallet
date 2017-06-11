@@ -4,9 +4,11 @@ from django.core.cache import cache
 from models import Wallet
 
 
-def getOrCreateChangeWallet():
-    change_wallet, created = Wallet.objects.get_or_create(path=[0], defaults={'change_wallet': True})
-    return change_wallet
+INTERNAL_WALLET_CHANGE = 0
+
+
+def get_or_create_internal_wallet(internal_wallet_id):
+    return Wallet.objects.get_or_create(path=[0, internal_wallet_id], defaults={'internal_wallet': True})[0]
 
 
 def getFeeInSatoshisPerByte():

@@ -13,7 +13,7 @@ import pytz
 import requests
 
 from models import Wallet, Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput, CurrentBlockHeight
-from utils import getOrCreateChangeWallet
+from utils import get_or_create_internal_wallet, INTERNAL_WALLET_CHANGE
 
 
 class AddRealBitcoinTransactions(CronJobBase):
@@ -254,7 +254,7 @@ class SendOutgoingTransactions(CronJobBase):
             # nothing but set the "inputs_selected_at" timestamp.
             extra_amount = inputs_total - (outputs_total + fee)
             if extra_amount > Decimal(0):
-                change_wallet = getOrCreateChangeWallet()
+                change_wallet = get_or_create_internal_wallet(INTERNAL_WALLET_CHANGE)
                 change_address = change_wallet.getUnusedAddress()
                 OutgoingTransactionOutput.objects.create(tx=otx, amount=extra_amount, bitcoin_address=change_address.address)
 
