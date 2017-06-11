@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Sum
 from django.utils.timezone import now
@@ -9,6 +10,7 @@ import datetime
 from decimal import Decimal, ROUND_HALF_UP
 from bitcoinrpc.authproxy import AuthServiceProxy
 import pytz
+import requests
 
 from models import Wallet, Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput, CurrentBlockHeight
 from utils import getOrCreateChangeWallet
@@ -259,3 +261,15 @@ class SendOutgoingTransactions(CronJobBase):
             # Enough inputs was assigned, so marking this transaction fully assigned
             otx.inputs_selected_at = now()
             otx.save(update_fields=['inputs_selected_at'])
+
+
+class FetchProperFee(CronJobBase):
+    schedule = Schedule(run_every_mins=20, retry_after_failure_mins=5)
+    code = 'bitcoin_webwallet.cron.FetchProperFee'
+
+    def do(self):
+        response = requests.get('https://bitcoinfees.21.co/api/v1/fees/recommended')
+        response_data = response.json()
+        fee = response_data.get('fastestFee')
+        if fee:
+            cache.set('fee_satoshis_per_byte', fee, 60*60)

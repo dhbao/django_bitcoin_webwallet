@@ -19,6 +19,7 @@ setup(
         'pycoin',
         'pytz',
         'django-jsonfield',
+        'requests',
     ],
     dependency_links=[
         'git://github.com/jgarzik/python-bitcoinrpc.git#egg=python-bitcoinrpc',
