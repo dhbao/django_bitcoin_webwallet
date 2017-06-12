@@ -157,10 +157,14 @@ class Wallet(models.Model):
 
                 elif target_address:
 
-                    # If there is no outgoing transaction, then create one now
+                    # If there is no outgoing transaction, then try
+                    # to use some pending outgoing transaction
                     if not outgoing_tx:
-                        # TODO: In the future, use some existing pending transactions to save blockchain space. But do not add it to existing transaction if that transaction is being currently sent!
-                        outgoing_tx = OutgoingTransaction.objects.create()
+                        outgoing_tx = OutgoingTransaction.objects.filter(inputs_selected_at__isnull=True, sent_at__isnull=True).first()
+                        # If there was no existing outgoing
+                        # transaction, then create a new one.
+                        if not outgoing_tx:
+                            outgoing_tx = OutgoingTransaction.objects.create()
                         tx.outgoing_tx = outgoing_tx
                         tx.save(update_fields=['outgoing_tx'])
 
