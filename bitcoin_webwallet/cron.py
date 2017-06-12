@@ -36,21 +36,50 @@ class AddRealBitcoinTransactions(CronJobBase):
         process_since = max(0, blocks_processed - EXTRA_BLOCKS_TO_PROCESS)
         process_since_hash = rpc.getblockhash(process_since)
 
-        # Get all old transactions, that require updating
-        old_txs = Transaction.objects.filter(incoming_txid__isnull=False, block_height__gt=process_since)
-        old_txs = [old_tx for old_tx in old_txs]
-
-        txs = rpc.listsinceblock(process_since_hash)['transactions']
-        for tx in txs:
+        # Just to be sure: Reconstruct list of transactions, in case
+        # there are receiving to same address in same transaction.
+        txs_raw = rpc.listsinceblock(process_since_hash)['transactions']
+        txs = []
+        for tx_raw in txs_raw:
             # Skip other than receiving transactions
-            if tx['category'] != 'receive':
+            if tx_raw['category'] != 'receive':
                 continue
 
             # Skip unconfirmed transactions for now
             # TODO: Show these too!
-            if 'blockhash' not in tx:
+            if 'blockhash' not in tx_raw:
                 continue
 
+            # Search for duplicate transaction/address pair
+            tx = None
+            for tx_find in txs:
+                if tx_find['txid'] == tx_raw['txid'] and tx_find['address'] == tx_raw['address']:
+                    tx = tx_find
+                    break
+
+            # Create new transaction, or update old one
+            if not tx:
+                txs.append({
+                    'txid': tx_raw['txid'],
+                    'address': tx_raw['address'],
+                    'amount': tx_raw['amount'],
+                    'blockhash': tx_raw['blockhash'],
+                    'timereceived': tx_raw['timereceived'],
+                })
+            else:
+                assert tx['txid'] == tx_raw['txid']
+                assert tx['address'] == tx_raw['address']
+                assert tx['blockhash'] == tx_raw['blockhash']
+                assert tx['timereceived'] == tx_raw['timereceived']
+                tx['amount'] += tx_raw['amount']
+
+        # Get already existing transactions, so they are not created twice.
+        # This list is also used to delete those Transactions that might have
+        # disappeared because of fork or other rare event. Better be sure.
+        old_txs = list(Transaction.objects.filter(incoming_txid__isnull=False, block_height__gt=process_since))
+
+        # Go through transactions and create Transaction objects.
+        for tx in txs:
             # Get required info
             txid = tx['txid']
             address = tx['address']
@@ -67,7 +96,8 @@ class AddRealBitcoinTransactions(CronJobBase):
             # Check if transaction already exists
             already_found = False
             for old_tx in old_txs:
-                if old_tx.incoming_txid == txid:
+                if old_tx.incoming_txid == txid and old_tx.receiving_address == address:
+                    assert old_tx.amount == amount
                     # Transaction already exists, so do not care about it any more
                     old_txs.remove(old_tx)
                     already_found = True
@@ -86,7 +116,9 @@ class AddRealBitcoinTransactions(CronJobBase):
                 new_tx.created_at = created_at
                 new_tx.save(update_fields=['created_at'])
 
-        # Clean remaining old transactions
+        # Clean remaining old transactions.
+        # The list should be empty, unless
+        # fork or something similar has happened.
         for old_tx in old_txs:
             old_tx.delete()
 

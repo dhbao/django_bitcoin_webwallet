@@ -208,7 +208,7 @@ class Transaction(models.Model):
     sending_addresses = JSONField(null=True, blank=True, default=None)
 
     # Incoming details from real Bitcoin network
-    incoming_txid = models.CharField(max_length=64, unique=True, null=True, blank=True, default=None)
+    incoming_txid = models.CharField(max_length=64, null=True, blank=True, default=None)
     block_height = models.PositiveIntegerField(null=True, blank=True, default=None)
 
     # Outgoing details from real Bitcoin network
@@ -230,6 +230,9 @@ class Transaction(models.Model):
         if self.description:
             result += ': ' + self.description
         return result
+
+    class Meta:
+        unique_together = ('receiving_address', 'incoming_txid')
 
 
 class OutgoingTransaction(models.Model):
