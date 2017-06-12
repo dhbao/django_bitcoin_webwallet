@@ -13,7 +13,7 @@ import pytz
 import requests
 
 from models import Wallet, Address, Transaction, OutgoingTransaction, OutgoingTransactionInput, OutgoingTransactionOutput, CurrentBlockHeight
-from utils import get_or_create_internal_wallet, INTERNAL_WALLET_CHANGE
+from utils import get_fee_in_satoshis_per_byte, get_or_create_internal_wallet, INTERNAL_WALLET_CHANGE
 
 
 class AddRealBitcoinTransactions(CronJobBase):
@@ -207,7 +207,7 @@ class SendOutgoingTransactions(CronJobBase):
 
             # Calculate fee
             tx_size = 148 * otx.inputs.count() + 34 * (otx.outputs.count() + 1) + 10
-            fee = settings.TRANSACTION_FEE_PER_KILOBYTE * Decimal(tx_size) / Decimal(1000)
+            fee = Decimal(get_fee_in_satoshis_per_byte()) * Decimal(tx_size) * Decimal('0.00000001')
             fee = fee.quantize(Decimal('0.00000001'))
 
             # Now assign inputs until there is enough for outputs
@@ -235,7 +235,7 @@ class SendOutgoingTransactions(CronJobBase):
 
                 # Recalculate fee
                 tx_size += 148
-                fee = settings.TRANSACTION_FEE_PER_KILOBYTE * Decimal(tx_size) / Decimal(1000)
+                fee = Decimal(get_fee_in_satoshis_per_byte()) * Decimal(tx_size) * Decimal('0.00000001')
                 fee = fee.quantize(Decimal('0.00000001'))
 
                 # Remove the best output from unspent outputs

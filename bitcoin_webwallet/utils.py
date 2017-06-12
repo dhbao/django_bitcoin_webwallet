@@ -11,7 +11,7 @@ def get_or_create_internal_wallet(internal_wallet_id):
     return Wallet.objects.get_or_create(path=[0, internal_wallet_id], defaults={'internal_wallet': True})[0]
 
 
-def getFeeInSatoshisPerByte():
+def get_fee_in_satoshis_per_byte():
     fee = cache.get('fee_satoshis_per_byte')
     if fee:
         return fee
