@@ -30,7 +30,10 @@ class Wallet(models.Model):
         current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
         max_block_height = max(0, current_block_height - confirmations + 1)
 
-        txs = self.transactions.exclude(block_height__gt=max_block_height)
+        if confirmations > 0:
+            txs = self.transactions.exclude(block_height__isnull=True, incoming_txid__isnull=False).exclude(block_height__gt=max_block_height)
+        else:
+            txs = self.transactions.all()
         return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
 
     def getReceived(self, confirmations):
@@ -38,7 +41,10 @@ class Wallet(models.Model):
         current_block_height = current_block_height_queryset[0].block_height if current_block_height_queryset.count() else 0
         max_block_height = max(0, current_block_height - confirmations + 1)
 
-        txs = self.transactions.filter(amount__gt=0).exclude(block_height__gt=max_block_height)
+        if confirmations > 0:
+            txs = self.transactions.filter(amount__gt=0).exclude(block_height__isnull=True, incoming_txid__isnull=False).exclude(block_height__gt=max_block_height)
+        else:
+            txs = self.transactions.all()
         return txs.aggregate(Sum('amount')).get('amount__sum') or Decimal(0)
 
     def getSent(self):

@@ -1,7 +1,7 @@
 from django.conf import settings
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from django.utils.timezone import now
 
 from django_cron import CronJobBase, Schedule
@@ -45,11 +45,6 @@ class AddRealBitcoinTransactions(CronJobBase):
             if tx_raw['category'] != 'receive':
                 continue
 
-            # Skip unconfirmed transactions for now
-            # TODO: Show these too!
-            if 'blockhash' not in tx_raw:
-                continue
-
             # Search for duplicate transaction/address pair
             tx = None
             for tx_find in txs:
@@ -63,20 +58,22 @@ class AddRealBitcoinTransactions(CronJobBase):
                     'txid': tx_raw['txid'],
                     'address': tx_raw['address'],
                     'amount': tx_raw['amount'],
-                    'blockhash': tx_raw['blockhash'],
+                    'blockhash': tx_raw.get('blockhash'),
                     'timereceived': tx_raw['timereceived'],
                 })
             else:
                 assert tx['txid'] == tx_raw['txid']
                 assert tx['address'] == tx_raw['address']
-                assert tx['blockhash'] == tx_raw['blockhash']
+                assert tx['blockhash'] == tx_raw.get('blockhash')
                 assert tx['timereceived'] == tx_raw['timereceived']
                 tx['amount'] += tx_raw['amount']
 
         # Get already existing transactions, so they are not created twice.
         # This list is also used to delete those Transactions that might have
         # disappeared because of fork or other rare event. Better be sure.
-        old_txs = list(Transaction.objects.filter(incoming_txid__isnull=False, block_height__gt=process_since))
+        old_txs = Transaction.objects.filter(incoming_txid__isnull=False)
+        old_txs = old_txs.filter(Q(block_height__isnull=True) | Q(block_height__gt=process_since))
+        old_txs = list(old_txs)
 
         # Go through transactions and create Transaction objects.
         for tx in txs:
@@ -84,7 +81,8 @@ class AddRealBitcoinTransactions(CronJobBase):
             txid = tx['txid']
             address = tx['address']
             amount = tx['amount']
-            block_height = rpc.getblock(tx['blockhash'])['height']
+            block_hash = tx['blockhash']
+            block_height = rpc.getblock(block_hash)['height'] if block_hash else None
             created_at = datetime.datetime.utcfromtimestamp(tx['timereceived']).replace(tzinfo=pytz.utc)
 
             # Skip transaction if it doesn't belong to any Wallet
@@ -98,7 +96,11 @@ class AddRealBitcoinTransactions(CronJobBase):
             for old_tx in old_txs:
                 if old_tx.incoming_txid == txid and old_tx.receiving_address == address:
                     assert old_tx.amount == amount
-                    # Transaction already exists, so do not care about it any more
+                    # Check if transaction was confirmed
+                    if block_height and not old_tx.block_height:
+                        old_tx.block_height = block_height
+                        old_tx.save(update_fields=['block_height'])
+                    # Do nothing more with transaction, as it already exists in database.
                     old_txs.remove(old_tx)
                     already_found = True
                     break
